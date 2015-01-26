@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<title>Canvas Playpen</title>
+<style type="text/css" media="screen">
+    html{
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      margin: 0;
+      padding: 0;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: -webkit-flex;
+      display: flex;
+    }
+    #canvas {
+      -webkit-flex:  1 1 auto;
+      flex: 1 1 auto;
+      background: #321;
+      
+    }
+    #editor-pane {
+      -webkit-flex: 0 0 39%;
+      flex: 0 0 39%;
+      position:relative;
+      background: #88f;
+    }
+    #editor {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+    }
+</style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="editor-pane">
+    <div id="editor"></div>
+    <script src="ace/ace.js" type="text/javascript" charset="utf-8"></script>
+    <script>
+        var anim = null;
+        var initialCode = localStorage.getItem('code') || '//code here';
+        document.querySelector('#editor').appendChild(document.createTextNode(initialCode));
+        var canvas = document.querySelector('#canvas');
+        var setCanvasDims = function () {
+          canvas.width = 0 + document.defaultView.getComputedStyle(canvas).width.replace(/px/, '');
+          canvas.height = 0 + document.defaultView.getComputedStyle(canvas).height.replace(/px/, '');
+        }
+        window.addEventListener('resize', setCanvasDims);
+        setCanvasDims();
+        var editor = ace.edit("editor");
+        editor.setTheme("ace/theme/vibrant_ink");
+        editor.getSession().setMode("ace/mode/javascript");
+        editor.commands.addCommand({
+          name: 'saveandrun',
+          bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
+          exec: function(editor) {
+            var code = editor.getValue();
+            localStorage.setItem('code', code);
+            var draws = [];
+            var scope = {canvas: canvas, frame: function (fn) {draws.push(fn)}};
+            (new Function ('$', code)).call(scope);
+            if (anim) {
+              window.cancelAnimationFrame(anim);
+            }
+            var prev  =  null;
+            (function drawLoop(time) {
+              try {
+                if (!prev) {
+                  prev = time;
+                  anim = window.requestAnimationFrame(drawLoop);
+                  return;
+                }
+                var delta = time - prev;
+                prev = time;
+                var ctx = canvas.getContext('2d');
+                draws.forEach(function(fn) {
+                  fn(ctx, delta);
+                });
+                anim = window.requestAnimationFrame(drawLoop);
+              } catch(e) {
+                console.log(e);
+              }
+            })();
+          },
+          readOnly: true // false if this command should not apply in readOnly mode
+        });
+        editor.focus();
+        
+    </script>
+  </div>
+</body>
+</html>
