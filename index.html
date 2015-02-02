@@ -15,84 +15,176 @@
       left: 0;
       right: 0;
       bottom: 0;
-      display: -webkit-flex;
       display: flex;
     }
     #canvas {
-      -webkit-flex:  1 1 auto;
-      flex: 1 1 auto;
+      width: 100%;
+      height: 100%;
       background: #321;
       
     }
     #editor-pane {
-      -webkit-flex: 0 0 39%;
       flex: 0 0 39%;
       position:relative;
       background: #88f;
     }
+    #script {
+      background: #999;
+      position: absolute;
+      top: 1px;
+      left: 0;
+      right: 0;
+      height: 20px;
+    }
     #editor {
       position: absolute;
-      top: 0;
+      top: 1px;
       left: 0;
       right: 0;
       bottom: 0;
     }
+    #canvas-pane {
+      flex: 1 1 auto;
+      background: #88f;
+      position: relative;
+      overflow: auto;
+    }
 </style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
+  <div id="canvas-pane">
+    <canvas id="canvas"></canvas>
+  </div>
   <div id="editor-pane">
+      <div id="script">
+      </div>
     <div id="editor"></div>
     <script src="ace/ace.js" type="text/javascript" charset="utf-8"></script>
     <script>
-        var anim = null;
-        var initialCode = localStorage.getItem('code') || '//code here';
-        document.querySelector('#editor').appendChild(document.createTextNode(initialCode));
+    
         var canvas = document.querySelector('#canvas');
-        var setCanvasDims = function () {
-          canvas.width = 0 + document.defaultView.getComputedStyle(canvas).width.replace(/px/, '');
-          canvas.height = 0 + document.defaultView.getComputedStyle(canvas).height.replace(/px/, '');
-        }
-        window.addEventListener('resize', setCanvasDims);
-        setCanvasDims();
-        var editor = ace.edit("editor");
-        editor.setTheme("ace/theme/vibrant_ink");
-        editor.getSession().setMode("ace/mode/javascript");
-        editor.commands.addCommand({
-          name: 'saveandrun',
-          bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
-          exec: function(editor) {
-            var code = editor.getValue();
-            localStorage.setItem('code', code);
-            var draws = [];
-            var scope = {canvas: canvas, frame: function (fn) {draws.push(fn)}};
-            (new Function ('$', code)).call(scope);
-            if (anim) {
-              window.cancelAnimationFrame(anim);
+        var canvasPane = document.querySelector('#canvas-pane');
+        var canvasSize = (function (canvas, canvasPane) {
+          var autoResize = true;
+          var fix = function (w, h) {
+            autoResize = false;
+            canvas.width = w;
+            canvas.height = h;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+            canvasPane.style.overflow = 'scroll';
+          };
+          var unfix = function () {
+            autoResize = true;
+            canvas.width = canvasPane.offsetWidth;
+            canvas.height = canvasPane.offsetHeight;
+            canvas.style.width = '100%';
+            canvas.style.height = '100%';
+            canvasPane.style.overflow = 'hidden';
+          };
+          var onResize = function (ev) {
+            if (!autoResize) return;
+            unfix();
+          };
+          window.addEventListener('resize', onResize);
+          return {
+            fix: fix,
+            unfix: unfix
+          };
+        })(canvas, canvasPane);
+        canvasSize.unfix();
+        
+        var storage = (function () {
+          var defaultName = 'code';
+          var code = localStorage.getItem(defaultName) || '//code here';
+          return {
+            get: function () { return code; },
+            save: function (changed) {
+              var name = defaultName
+              localStorage.setItem(name, changed);
+              code = changed;
             }
-            var prev  =  null;
-            (function drawLoop(time) {
+          }
+        })();
+        
+  
+        var animate = (function () {
+          var animation = null;
+          return function (ctx, drawer, error) {
+            animation && window.cancelAnimationFrame(animation);
+            animation = window.requestAnimationFrame(function drawLoop (time) {
               try {
-                if (!prev) {
-                  prev = time;
-                  anim = window.requestAnimationFrame(drawLoop);
-                  return;
-                }
-                var delta = time - prev;
-                prev = time;
-                var ctx = canvas.getContext('2d');
-                draws.forEach(function(fn) {
-                  fn(ctx, delta);
-                });
-                anim = window.requestAnimationFrame(drawLoop);
+                if (!drawer(ctx, time)) return true; //break animation if drawer doesnt return truthy value.
+                animation  = window.requestAnimationFrame(drawLoop);
               } catch(e) {
-                console.log(e);
+                return error(e);
               }
-            })();
-          },
-          readOnly: true // false if this command should not apply in readOnly mode
-        });
-        editor.focus();
+            });
+          };
+        })()
+
+
+        var runner = (function (animate, canvas, canvasSize) {
+          return function (code) {
+            var ctx = canvas.getContext('2d');
+            var error = function (err) {
+              canvasSize.fix(5000,5000);
+              ctx.fillStyle = '#555';
+              ctx.fillRect(0,0, canvas.width, canvas.height);
+              ctx.fillStyle = '#fff';
+              ctx.font = '16px monospace';
+              y = 0;
+              err.stack.split('\n').forEach(function (line) {
+                y+=20;
+                ctx.fillText(line, 20, y);
+              });
+              console.log(err);
+            }
+            canvasSize.unfix();
+            try {
+              var drawer = (new Function (code)).call({
+                setSize: function (w, h) {
+                  if (!w || !h) {
+                    canvasSize.unfix()
+                  }
+                  canvasSize.fix(w, h);
+                },
+                
+                width: function () { return canvas.width },
+                height: function () { return canvas.height}
+              });
+            } catch (e) {
+              return error(e);
+            }
+            if (typeof drawer === 'function') {
+              animate(ctx, drawer, error);
+            }
+          }
+        })(animate, canvas, canvasSize);
+
+
+        var editor = (function (runner, storage) {
+          var editor = ace.edit("editor");
+          editor.setTheme("ace/theme/vibrant_ink");
+          editor.setValue(storage.get());
+          editor.getSession().setMode("ace/mode/javascript");
+          editor.commands.addCommand({
+            name: 'saveandrun',
+            bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
+            exec: function () {
+              var code = editor.getValue();
+              storage.save(code);
+              runner(code);
+            },
+            readOnly: false
+          });
+          editor.focus();
+          return editor;
+        })(runner, storage)
+
+
+
+        
         
     </script>
   </div>
