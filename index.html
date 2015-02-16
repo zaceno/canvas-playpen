@@ -17,12 +17,25 @@
       bottom: 0;
       display: flex;
     }
+    
+    #script, button, input, select {
+      font-size: 11px;
+      font-family: 'sans-serif';
+    }
+    
+    #canvas-pane {
+      flex: 1 1 auto;
+      background: #88f;
+      position: relative;
+      overflow: hidden;
+    }
+
     #canvas {
       width: 100%;
       height: 100%;
       background: #321;
-      
     }
+
     #editor-pane {
       flex: 0 0 39%;
       position:relative;
@@ -31,23 +44,17 @@
     #script {
       background: #999;
       position: absolute;
-      top: 1px;
+      top: 0px;
       left: 0;
       right: 0;
       height: 20px;
     }
     #editor {
       position: absolute;
-      top: 1px;
+      top: 20px;
       left: 0;
       right: 0;
       bottom: 0;
-    }
-    #canvas-pane {
-      flex: 1 1 auto;
-      background: #88f;
-      position: relative;
-      overflow: auto;
     }
 </style>
 </head>
@@ -57,135 +64,214 @@
   </div>
   <div id="editor-pane">
       <div id="script">
+        <select id="script-selector"></select>
+        <input type="text" id="script-title" value="">
+        <button id="export">Export</button>
+        Import:<input type="file" id="import" name="import">
       </div>
     <div id="editor"></div>
     <script src="ace/ace.js" type="text/javascript" charset="utf-8"></script>
     <script>
     
-        var canvas = document.querySelector('#canvas');
-        var canvasPane = document.querySelector('#canvas-pane');
-        var canvasSize = (function (canvas, canvasPane) {
-          var autoResize = true;
-          var fix = function (w, h) {
-            autoResize = false;
-            canvas.width = w;
-            canvas.height = h;
-            canvas.style.width = w + 'px';
-            canvas.style.height = h + 'px';
-            canvasPane.style.overflow = 'scroll';
-          };
-          var unfix = function () {
-            autoResize = true;
-            canvas.width = canvasPane.offsetWidth;
+        /* Make canvas automatically resize to pane, when window resizes*/
+        (function () {
+          var canvas     = document.querySelector('#canvas');
+          var canvasPane = document.querySelector('#canvas-pane');
+          var setSize = function () {
+            canvas.width  = canvasPane.offsetWidth;
             canvas.height = canvasPane.offsetHeight;
-            canvas.style.width = '100%';
-            canvas.style.height = '100%';
-            canvasPane.style.overflow = 'hidden';
           };
-          var onResize = function (ev) {
-            if (!autoResize) return;
-            unfix();
-          };
-          window.addEventListener('resize', onResize);
-          return {
-            fix: fix,
-            unfix: unfix
-          };
-        })(canvas, canvasPane);
-        canvasSize.unfix();
-        
-        var storage = (function () {
-          var defaultName = 'code';
-          var code = localStorage.getItem(defaultName) || '//code here';
-          return {
-            get: function () { return code; },
-            save: function (changed) {
-              var name = defaultName
-              localStorage.setItem(name, changed);
-              code = changed;
-            }
-          }
+          window.addEventListener('resize', setSize);
+          setSize();
         })();
-        
-  
-        var animate = (function () {
-          var animation = null;
-          return function (ctx, drawer, error) {
-            animation && window.cancelAnimationFrame(animation);
-            animation = window.requestAnimationFrame(function drawLoop (time) {
-              try {
-                if (!drawer(ctx, time)) return true; //break animation if drawer doesnt return truthy value.
-                animation  = window.requestAnimationFrame(drawLoop);
-              } catch(e) {
-                return error(e);
-              }
-            });
+
+        /* access & manipulate the scripts stored in local storage*/
+        var scriptManager = (function () {
+          var isscript = function (key) { return !!key.match(/^script_/); };
+          var defix = function (key) { return key.replace(/^script_/, ''); };
+          var prefix = function (name) { return 'script_' + name; };
+          var scriptManager = {
+            list:   function () {           return Object.keys(localStorage).filter(isscript).map(defix); },
+            exists: function (name) {       return !!localStorage[prefix(name)]; },
+            read:   function (name) {       return localStorage.getItem(prefix(name)); },
+            remove: function (name) {       localStorage.removeItem(prefix(name)); },
+            save:   function (name, code) { localStorage.setItem(prefix(name), code); },
+            export: function () {
+              var modules = {};
+              scriptManager.list().forEach(function (script) {
+                modules[script] = scriptManager.read(script);
+              });
+              return modules;
+            },
+            import: function (obj) {
+              console.log('IN IMPORT OF SCRIPTMANAGER', obj)
+              Object.keys(obj).forEach(function (script) {
+                console.log('IMPORTING', script, obj[script]);
+                scriptManager.save(script, obj[script]);
+              });
+            }
           };
-        })()
-
-
-        var runner = (function (animate, canvas, canvasSize) {
-          return function (code) {
-            var ctx = canvas.getContext('2d');
-            var error = function (err) {
-              canvasSize.fix(5000,5000);
-              ctx.fillStyle = '#555';
-              ctx.fillRect(0,0, canvas.width, canvas.height);
-              ctx.fillStyle = '#fff';
-              ctx.font = '16px monospace';
-              y = 0;
-              err.stack.split('\n').forEach(function (line) {
-                y+=20;
-                ctx.fillText(line, 20, y);
-              });
-              console.log(err);
+          if (!scriptManager.exists('')) {
+            scriptManager.save('', '');
+          };
+          return scriptManager;
+        })();
+    
+        /* Execute a script, within a function, and having a
+        context that can be manipulated
+        context has 'load', which loads other modules by running
+        with the same context, and the module is what they return
+        
+        */
+        var runner = (function (scriptManager) {
+          var cache = {};
+          var run = function (code) { return (new Function(code)).call(context); };
+          var resetCache = function () { cache = {}; };
+          var context = { load: function (name) {
+            if (typeof cache[name] === 'undefined' ) {
+              cache[name] = run(scriptManager.read(name)) || null;
             }
-            canvasSize.unfix();
-            try {
-              var drawer = (new Function (code)).call({
-                setSize: function (w, h) {
-                  if (!w || !h) {
-                    canvasSize.unfix()
-                  }
-                  canvasSize.fix(w, h);
-                },
-                
-                width: function () { return canvas.width },
-                height: function () { return canvas.height}
-              });
-            } catch (e) {
-              return error(e);
-            }
-            if (typeof drawer === 'function') {
-              animate(ctx, drawer, error);
-            }
-          }
-        })(animate, canvas, canvasSize);
+            return cache[name];
+          } };
+          return {
+            run: function (code) {
+              resetCache();
+              run(code);
+            },
+            set: function (k, v) { context[k] = v; }
+          };
+        })(scriptManager);
 
 
-        var editor = (function (runner, storage) {
+        
+        var editor = (function (runner) {
+          var saveFn = null;
           var editor = ace.edit("editor");
           editor.setTheme("ace/theme/vibrant_ink");
-          editor.setValue(storage.get());
           editor.getSession().setMode("ace/mode/javascript");
           editor.commands.addCommand({
-            name: 'saveandrun',
-            bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
-            exec: function () {
-              var code = editor.getValue();
-              storage.save(code);
-              runner(code);
-            },
+            name: 'run',
+            bindKey: {win: 'Ctrl-E',  mac: 'Command-E'},
+            exec: function () { runner.run(editor.getValue()); },
             readOnly: false
           });
+          editor.commands.addCommand({
+            name: 'save',
+            bindKey: {win: 'Ctrl-S',  mac: 'Command-S'},
+            exec: function () { saveFn && saveFn(); },
+            readOnly: false
+          });
+          editor.saver = function (fn) {
+            saveFn = fn;
+          };
           editor.focus();
           return editor;
-        })(runner, storage)
-
-
-
+        })(runner);
+    
+    
+    
+        var Dropdown = function (el) {
+          this.el = el;
+        }
+        Dropdown.prototype.populate = function (values, selected) {
+            selected = selected || values[0];
+            while (this.el.firstChild)  this.el.removeChild(this.el.firstChild);
+            values.forEach(function (v) {
+              var o = document.createElement('option');
+              o.innerText = v;
+              if (v === selected) {
+                o.selected = true;
+              };
+              this.el.appendChild(o);
+            }.bind(this));
+        };
+        Dropdown.prototype._findOne = function (filter) {
+          return Array.prototype.filter.call(this.el.childNodes, filter)[0];
+        }
+        Dropdown.prototype.getSelected = function () {
+          return this._findOne(function (o) { return !!o.selected}).innerText;
+        };
+        Dropdown.prototype.remove = function (name) {
+          var o = this._findOne(function (o) { return o.innerText === name; })
+          this.el.removeChild(o);
+        };
+        Dropdown.prototype.rename = function (oldV, newV) {
+            Array.prototype.filter.call(this.el.childNodes,  function (o) {
+              return oldV === o.innerText;
+            })[0].innerText = newV;
+        };
+    
+      
+        /*
+        Use a dropdown and input to manage which file is being edited,
+        it's name, removing et c.
+        */
+        var scriptSelector = (function (scriptManager, editor) {
+          var current = null; //the most recently loaded script
+          var dropdown = new Dropdown(document.querySelector('select#script-selector'));
+          var input  = document.querySelector('input#script-title');
+          editor.saver(function (code) {
+            scriptManager.save(current, editor.getValue());
+          });
+          input.addEventListener('change', function () {
+            var prev = current;
+            current = (!input.value || !scriptManager.exists(input.value)) ? input.value : prev;
+            var code = editor.getValue();
+            scriptManager.remove(prev);
+            if (prev === '') scriptManager.save('', code);
+            scriptManager.save(current, code);
+            dropdown.populate(scriptManager.list(), current);
+            input.value = current;
+          });
+          dropdown.el.addEventListener('change',function () {
+            scriptManager.save(current, editor.getValue());
+            current = dropdown.getSelected();
+            input.value = current;
+            editor.setValue(scriptManager.read(current));
+          });
+          current = '';
+          input.value = current;
+          dropdown.populate(scriptManager.list(), current);
+          editor.setValue(scriptManager.read(current));
+          return dropdown;
+        })(scriptManager, editor);
         
+        /* Export modules functionality */
+        (function  (scriptManager) {
+          var button = document.querySelector('button#export');
+          
+          var sendDownload = function (code) {
+            var a = document.createElement('a');
+            a.href = 'data:application/json;charset=utf-8, ' + encodeURIComponent(code);
+            a.download = 'canvas-modules.json';
+            a.target = '_blank';
+            a.style = 'display:none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a)
+          };
+          button.addEventListener('click', function () {
+            sendDownload(JSON.stringify(scriptManager.export()));
+          });
+        })(scriptManager);
         
+        /*Import modules functionnality */
+        (function (scriptManager, scriptSelector, editor) {
+          var input = document.querySelector('input#import');
+          input.addEventListener('change', function (ev) {
+            var file = ev.target.files[0];
+            if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function (ev) {
+              input.value = '';
+              var obj = JSON.parse(ev.target.result);
+              scriptManager.import(obj);
+              scriptSelector.populate(scriptManager.list(), scriptSelector.getSelected());
+              editor.setValue(scriptManager.read(scriptSelector.getSelected()));
+            }
+            reader.readAsText(file);
+          });
+        })(scriptManager, scriptSelector, editor)
     </script>
   </div>
 </body>
