@@ -152,7 +152,9 @@
           editor.commands.addCommand({
             name: 'run',
             bindKey: {win: 'Ctrl-E',  mac: 'Command-E'},
-            exec: function () { runner.run(editor.getValue()); },
+            exec: function () {
+              saveFn && saveFn();
+              runner.run(editor.getValue()); },
             readOnly: false
           });
           editor.commands.addCommand({
