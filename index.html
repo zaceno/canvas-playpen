@@ -23,17 +23,11 @@
       font-family: 'sans-serif';
     }
     
-    #canvas-pane {
+    #container {
       flex: 1 1 auto;
       background: #88f;
       position: relative;
-      overflow: hidden;
-    }
-
-    #canvas {
-      width: 100%;
-      height: 100%;
-      background: #321;
+      overflow: overlay;
     }
 
     #editor-pane {
@@ -59,31 +53,20 @@
 </style>
 </head>
 <body>
-  <div id="canvas-pane">
-    <canvas id="canvas"></canvas>
+  <div id="container">
   </div>
   <div id="editor-pane">
       <div id="script">
         <select id="script-selector"></select>
         <input type="text" id="script-title" value="">
-        <button id="export">Export</button>
-        Import:<input type="file" id="import" name="import">
+        <button id="export">X</button>
+        <input type="file" id="import" name="import" style="width:75px">
+        <button id="build">B</button>
       </div>
     <div id="editor"></div>
     <script src="ace/ace.js" type="text/javascript" charset="utf-8"></script>
     <script>
     
-        /* Make canvas automatically resize to pane, when window resizes*/
-        (function () {
-          var canvas     = document.querySelector('#canvas');
-          var canvasPane = document.querySelector('#canvas-pane');
-          var setSize = function () {
-            canvas.width  = canvasPane.offsetWidth;
-            canvas.height = canvasPane.offsetHeight;
-          };
-          window.addEventListener('resize', setSize);
-          setSize();
-        })();
 
         /* access & manipulate the scripts stored in local storage*/
         var scriptManager = (function () {
@@ -91,10 +74,10 @@
           var defix = function (key) { return key.replace(/^script_/, ''); };
           var prefix = function (name) { return 'script_' + name; };
           var scriptManager = {
-            list:   function () {           return Object.keys(localStorage).filter(isscript).map(defix); },
-            exists: function (name) {       return !!localStorage[prefix(name)]; },
-            read:   function (name) {       return localStorage.getItem(prefix(name)); },
-            remove: function (name) {       localStorage.removeItem(prefix(name)); },
+            list:   function () {return Object.keys(localStorage).filter(isscript).map(defix); },
+            exists: function (name) { return !!localStorage[prefix(name)]; },
+            read:   function (name) { return localStorage.getItem(prefix(name)); },
+            remove: function (name) { localStorage.removeItem(prefix(name)); },
             save:   function (name, code) { localStorage.setItem(prefix(name), code); },
             export: function () {
               var modules = {};
@@ -104,9 +87,7 @@
               return modules;
             },
             import: function (obj) {
-              console.log('IN IMPORT OF SCRIPTMANAGER', obj)
               Object.keys(obj).forEach(function (script) {
-                console.log('IMPORTING', script, obj[script]);
                 scriptManager.save(script, obj[script]);
               });
             }
@@ -127,12 +108,15 @@
           var cache = {};
           var run = function (code) { return (new Function(code)).call(context); };
           var resetCache = function () { cache = {}; };
-          var context = { load: function (name) {
-            if (typeof cache[name] === 'undefined' ) {
-              cache[name] = run(scriptManager.read(name)) || null;
-            }
-            return cache[name];
-          } };
+          var context = {
+            load: function (name) {
+              if (typeof cache[name] === 'undefined' ) {
+                cache[name] = run(scriptManager.read(name)) || null;
+              }
+              return cache[name];
+            },
+            el: document.querySelector('#container')
+          };
           return {
             run: function (code) {
               resetCache();
@@ -238,24 +222,28 @@
           return dropdown;
         })(scriptManager, editor);
         
-        /* Export modules functionality */
-        (function  (scriptManager) {
-          var button = document.querySelector('button#export');
-          
-          var sendDownload = function (code) {
+        
+        /*causes file to be downloaded*/
+        var download = (function () {
+          return function (mimetype, filename, code) {
             var a = document.createElement('a');
-            a.href = 'data:application/json;charset=utf-8, ' + encodeURIComponent(code);
-            a.download = 'canvas-modules.json';
+            a.href = 'data:' + mimetype + ';charset=utf-8, ' + encodeURIComponent(code);
+            a.download = filename;
             a.target = '_blank';
             a.style = 'display:none';
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a)
-          };
+          }
+        })();
+        
+        /* Export modules functionality */
+        (function  (scriptManager, download) {
+          var button = document.querySelector('button#export');
           button.addEventListener('click', function () {
-            sendDownload(JSON.stringify(scriptManager.export()));
+            download('application/javascript', 'playpen-project.json', JSON.stringify(scriptManager.export()));
           });
-        })(scriptManager);
+        })(scriptManager, download);
         
         /*Import modules functionnality */
         (function (scriptManager, scriptSelector, editor) {
@@ -273,7 +261,30 @@
             }
             reader.readAsText(file);
           });
-        })(scriptManager, scriptSelector, editor)
+        })(scriptManager, scriptSelector, editor);
+        
+        /*Build app tool */
+        (function (scriptmanager, scriptSelector, download) {
+          document.querySelector('button#build').addEventListener('click', function () {
+            var src = '\n (' + (function (sources) {
+              sources  = JSON.parse(sources);
+              var run,
+                  cache = {},
+                  context = {
+                    load: function (name) {
+                      if (typeof cache[name] === 'undefined' ) {
+                      cache[name] = run(sources[name]) || null;
+                    }
+                    return cache[name];
+                  },
+                  el: document.querySelector('#container')
+                };
+              run = function (code) { return (new Function(code)).call(context); };
+              run(sources['']);
+            }).toString() + ')('+JSON.stringify(JSON.stringify(scriptManager.export()))+');';
+            download('application/javascript', 'script.js', src);
+          });
+        })(scriptManager, scriptSelector, download);
     </script>
   </div>
 </body>
